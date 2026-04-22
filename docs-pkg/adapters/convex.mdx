@@ -9,6 +9,23 @@ The Convex adapter lets you persist pipeline state in your own Convex table and 
 `advancePhase` calls through Convex's built-in scheduler. Import from
 `@claritylabs/cl-pipelines/convex`.
 
+## Contract
+
+The five mutations you implement must satisfy the following invariants. Violating them can
+cause subtle bugs — most commonly **stale error messages surviving a retry**.
+
+| Function | Required behaviour |
+|---|---|
+| `getJob({ jobId })` | Return `{ status, checkpoint, error? } \| null`. Return `null` for unknown IDs. |
+| `setStatus({ jobId, status, error })` | Patch `pipelineStatus` **and** `pipelineError`. When `error` is `null`, **clear** `pipelineError` (set it to `undefined`). Never skip the patch. |
+| `setCheckpoint({ jobId, checkpoint })` | Patch `pipelineCheckpoint`. Clear the field when `checkpoint` is nullish. |
+| `appendLog({ jobId, … })` | Append one entry to `pipelineLog`, creating the array if absent. |
+| `clearLog({ jobId })` | Set `pipelineLog` to `[]`. |
+
+> **Stale-error rule** — `setStatus` is always called with an explicit `error` value (either a
+> string or `null`). When `error` is `null` the adapter is signalling "clear any previous error".
+> Your mutation must honour this by patching `pipelineError: error ?? undefined` unconditionally.
+
 ## 1. Schema
 
 Use `pipelineFields()` to add the required fields to any table:
@@ -64,11 +81,23 @@ export const getJob = internalQuery({
 });
 
 export const setStatus = internalMutation({
-  args: { jobId: v.string(), status: v.string(), error: v.optional(v.string()) },
+  args: {
+    jobId: v.string(),
+    status: v.union(
+      v.literal("idle"),
+      v.literal("running"),
+      v.literal("paused"),
+      v.literal("complete"),
+      v.literal("error"),
+    ),
+    // null means "clear the error" — do NOT use v.optional here, as that
+    // would allow the adapter to omit the field and leave a stale error.
+    error: v.union(v.string(), v.null()),
+  },
   handler: async (ctx, { jobId, status, error }) => {
     await ctx.db.patch(jobId as any, {
-      pipelineStatus: status as any,
-      pipelineError: error,
+      pipelineStatus: status,
+      pipelineError: error ?? undefined, // clears on null
     });
   },
 });
@@ -108,7 +137,31 @@ export const clearLog = internalMutation({
 });
 ```
 
-## 3. Advance action
+## 3. Wiring `ConvexPipelineMutations`
+
+Pass the `internal.*` references as a single object literal to
+`createConvexStorageAdapter`. Copy this block and adjust the module name:
+
+```ts
+import { internal } from "./_generated/api";
+import {
+  createConvexStorageAdapter,
+  createConvexSchedulerAdapter,
+} from "@claritylabs/cl-pipelines/convex";
+
+// All five keys are required.
+const mutations = {
+  getJob:       internal.applications.getJob,
+  setStatus:    internal.applications.setStatus,
+  setCheckpoint: internal.applications.setCheckpoint,
+  appendLog:    internal.applications.appendLog,
+  clearLog:     internal.applications.clearLog,
+};
+
+const storage = createConvexStorageAdapter<AgentCheckpoint>({ ctx, mutations });
+```
+
+## 4. Advance action
 
 Define an `internalAction` that calls `advancePhase` with the Convex adapters:
 
@@ -160,7 +213,7 @@ export const advance = internalAction({
 });
 ```
 
-## 4. Kicking off a job
+## 5. Kicking off a job
 
 From a public action (e.g., triggered after a form submission):
 
@@ -206,7 +259,7 @@ export const startExtraction = action({
 });
 ```
 
-## 5. Retry from UI
+## 6. Retry from UI
 
 Add a public action that accepts a `retryMode` and re-runs the pipeline:
 
