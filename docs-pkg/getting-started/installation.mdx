@@ -1,8 +1,59 @@
 ---
 title: Installation
-description: ''
+description: Install cl-pipelines and its optional subpaths, with peer dependency requirements and TypeScript notes.
 ---
 
 # Installation
 
-_Content coming in Task 9._
+## Core package
+
+```bash
+npm install @claritylabs/cl-pipelines
+```
+
+The core package includes the phase runner (`runPipeline`, `advancePhase`), the agent primitive, the in-memory adapters, and all TypeScript types. No additional peer dependencies are required for the core package beyond what is bundled.
+
+## Optional subpaths
+
+### Convex adapter
+
+```bash
+npm install @claritylabs/cl-pipelines convex
+```
+
+Import the adapter from `@claritylabs/cl-pipelines/convex`. Requires the `convex` peer dependency.
+
+### UI components
+
+```bash
+npm install @claritylabs/cl-pipelines react react-dom
+```
+
+Import UI primitives from `@claritylabs/cl-pipelines/ui`. Requires the `react` peer dependency. Components are client components — if you use the App Router in Next.js they must be imported inside a file that already carries `"use client"` at the top, or wrapped in your own client boundary.
+
+## Peer dependency matrix
+
+| Package | Required for | Minimum version |
+|---------|-------------|-----------------|
+| `zod` | Core validation | `>=3.22.0` |
+| `ai` | Agent primitive | `>=6.0.0` |
+| `convex` | `/convex` subpath | `>=1.17.0` |
+| `react` | `/ui` subpath | `>=18.0.0` |
+
+`zod` and `ai` are bundled as direct dependencies of the core package; the versions above are the tested floors. `convex` and `react` must be installed separately when using their respective subpaths.
+
+## TypeScript
+
+The package ships with its own `.d.ts` files — no `@types/` package is needed. Set `"moduleResolution": "bundler"` or `"node16"` in your `tsconfig.json` to resolve subpath exports correctly:
+
+```json
+{
+  "compilerOptions": {
+    "moduleResolution": "bundler"
+  }
+}
+```
+
+## Bundler notes
+
+The `/ui` subpath marks its components with the React Server Components `"use client"` directive. Bundlers that understand the RSC spec (Next.js ≥13.4, Remix with Vite, etc.) handle this automatically. If your bundler does not support the directive, strip it with a plugin or import from the raw source entry instead.

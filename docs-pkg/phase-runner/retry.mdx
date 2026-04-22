@@ -1,8 +1,67 @@
 ---
 title: Retry Modes
-description: ''
+description: The resume and full retry modes — when to use each, and how to wire them to a retry UI.
 ---
 
 # Retry Modes
 
-_Content coming in Task 9._
+## The two modes
+
+`RetryMode` is a union of two string literals:
+
+```ts
+type RetryMode = "resume" | "full";
+```
+
+Pass it as `retryMode` in `RunPipelineArgs`:
+
+| Mode | Behaviour |
+|------|-----------|
+| `"resume"` | Starts from the last saved checkpoint. The phase that failed will re-run with the same (or mid-phase saved) state. |
+| `"full"` | Discards the checkpoint entirely. The pipeline restarts from `initialPhase` with `initialState` — a complete reset. |
+
+When `retryMode` is omitted and a checkpoint exists, the runner behaves as `"resume"`. When there is no checkpoint, both modes behave identically (fresh start).
+
+## When to expose each mode to end users
+
+**Resume** is the right default. It is cheap — only the failed phase (or the mid-phase position) is re-executed. Show this as a plain "Retry" button.
+
+**Full** is the nuclear option. Use it when the state itself has become corrupt, when `initialState` has changed since the job was created, or when the user explicitly wants to start over. Label it clearly — "Start over" or "Reset and retry" — so users understand they will lose partial progress.
+
+## Soft errors also preserve checkpoints
+
+A phase returning `{ kind: "error", error: "..." }` has the same checkpoint-preservation behaviour as an unhandled throw. Both leave the last checkpoint intact, so `retryMode: "resume"` works for both without any extra handling.
+
+## Retry UI example
+
+```ts
+import { runPipeline } from "@claritylabs/cl-pipelines";
+import type { RetryMode } from "@claritylabs/cl-pipelines";
+
+async function retryJob(jobId: string, mode: RetryMode) {
+  await runPipeline({
+    jobId,
+    phases,
+    storage,
+    scheduler,
+    initialState,
+    retryMode: mode,
+  });
+}
+
+// React component wiring (illustrative — not a real cl-pipelines export).
+function RetryButtons({ jobId }: { jobId: string }) {
+  return (
+    <div>
+      <button onClick={() => retryJob(jobId, "resume")}>
+        Retry (resume from checkpoint)
+      </button>
+      <button onClick={() => retryJob(jobId, "full")}>
+        Start over (full reset)
+      </button>
+    </div>
+  );
+}
+```
+
+`runPipeline` is safe to call from a client action — it only writes to storage and enqueues a scheduler event; it does not run any phase code itself.

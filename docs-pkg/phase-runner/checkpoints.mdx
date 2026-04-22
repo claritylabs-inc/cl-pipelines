@@ -1,8 +1,62 @@
 ---
 title: Checkpoints
-description: ''
+description: When checkpoints are written and cleared, their shape, and how resume semantics work.
 ---
 
 # Checkpoints
 
-_Content coming in Task 9._
+## Shape
+
+```ts
+type Checkpoint<TState = unknown> = {
+  /** Name of the next phase to execute. */
+  nextPhase: string;
+  /** Arbitrary state carried between phases. */
+  state: TState;
+  /** Unix timestamp (ms) when this checkpoint was written. */
+  createdAt: number;
+};
+```
+
+The checkpoint is the only durable link between one phase execution and the next. Everything your phases need to resume work should live in `state`.
+
+## When checkpoints are written
+
+| Event | What is stored |
+|-------|---------------|
+| `runPipeline` called | `{ nextPhase: startPhase, state: initialState (or resumed state), createdAt }` |
+| Phase returns `{ kind: "next", nextPhase, state }` | `{ nextPhase, state, createdAt: now }` |
+| `ctx.saveState(state)` called mid-phase | `{ nextPhase: currentPhase, state, createdAt: now }` — the phase will re-run from this state if it crashes |
+| Phase throws or returns `{ kind: "error" }` | Checkpoint is **not modified** — the last written checkpoint is preserved for resume |
+
+## When checkpoints are cleared
+
+The checkpoint is set to `null` when a phase returns `{ kind: "done" }`. At that point `status` is also set to `"complete"`.
+
+## Resume semantics
+
+Pass `retryMode` to `runPipeline` to control what happens when a checkpoint already exists:
+
+- **`retryMode: "resume"`** — `resolveStartPhase` returns `checkpoint.nextPhase` and the existing state is loaded. The pipeline continues from where it left off.
+- **`retryMode: "full"`** — the checkpoint is discarded; the pipeline restarts from `initialPhase` (or `phases[0].name`) with `initialState`.
+- **No `retryMode` (default)** — behaves as `"resume"` when a checkpoint exists; same as fresh start when there is none.
+
+## Example: user-triggered resume
+
+```ts
+import { runPipeline } from "@claritylabs/cl-pipelines";
+
+// Wired to a "Retry" button in your UI.
+async function handleRetry(jobId: string) {
+  await runPipeline({
+    jobId,
+    phases,
+    storage,
+    scheduler,
+    initialState,
+    retryMode: "resume", // pick up from the last checkpoint
+  });
+}
+```
+
+Because both throws and `{ kind: "error" }` returns preserve the checkpoint, `retryMode: "resume"` works for all error scenarios without any special handling on the phase side.

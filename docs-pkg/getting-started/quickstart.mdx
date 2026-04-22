@@ -1,8 +1,92 @@
 ---
 title: Quickstart
-description: ''
+description: Build and run your first two-phase pipeline in under five minutes.
 ---
 
 # Quickstart
 
-_Content coming in Task 9._
+This guide walks you through installing `@claritylabs/cl-pipelines`, defining a two-phase pipeline, and running it with the built-in in-memory adapters.
+
+## 1. Install
+
+```bash
+npm install @claritylabs/cl-pipelines
+```
+
+## 2. Define phases
+
+A pipeline is an ordered array of `Phase<TState>` objects. Each phase receives a `PhaseContext` and returns a `PhaseResult` that either advances to the next phase, signals completion, or reports an error.
+
+```ts
+import type { Phase } from "@claritylabs/cl-pipelines";
+
+type CounterState = { count: number };
+
+const countUp: Phase<CounterState> = {
+  name: "countUp",
+  run: async (ctx) => {
+    const { count } = ctx.checkpoint.state;
+    await ctx.log(`count is ${count}`);
+    return { kind: "next", nextPhase: "logDone", state: { count: count + 1 } };
+  },
+};
+
+const logDone: Phase<CounterState> = {
+  name: "logDone",
+  run: async (ctx) => {
+    await ctx.log(`pipeline finished with count = ${ctx.checkpoint.state.count}`);
+    return { kind: "done" };
+  },
+};
+
+const phases = [countUp, logDone];
+```
+
+## 3. Wire up adapters
+
+The memory adapters keep everything in-process — no database or queue required. Call `scheduler._bind` to tell the scheduler which function to invoke when a phase completes.
+
+```ts
+import {
+  createMemoryStorage,
+  createMemoryScheduler,
+} from "@claritylabs/cl-pipelines/adapters/memory";
+import { advancePhase } from "@claritylabs/cl-pipelines";
+
+const storage = createMemoryStorage<CounterState>();
+const scheduler = createMemoryScheduler();
+
+// Tell the scheduler to call advancePhase for this pipeline's phases.
+scheduler._bind((jobId) =>
+  advancePhase({ jobId, phases, storage, scheduler })
+);
+```
+
+## 4. Run the pipeline
+
+```ts
+import { runPipeline } from "@claritylabs/cl-pipelines";
+
+await runPipeline({
+  jobId: "my-first-job",
+  phases,
+  storage,
+  scheduler,
+  initialState: { count: 0 },
+});
+
+// Drive all scheduled work to completion.
+await scheduler.drain();
+
+// Inspect the result.
+const jobs = storage._inspect();
+const job = jobs.get("my-first-job")!;
+console.log(job.status);    // "complete"
+console.log(job.log);       // log entries from both phases
+```
+
+## What's next
+
+- [Core Concepts](./concepts) — learn the vocabulary (jobs, checkpoints, retry modes).
+- [Pipelines](../phase-runner/pipeline) — full `RunPipelineArgs` reference and lifecycle diagram.
+- [Writing Phases](../phase-runner/phases) — mid-phase checkpointing for long-running work.

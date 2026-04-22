@@ -1,8 +1,42 @@
 ---
 title: Core Concepts
-description: ''
+description: The vocabulary you need to understand cl-pipelines — jobs, phases, checkpoints, and adapters.
 ---
 
 # Core Concepts
 
-_Content coming in Task 9._
+## Job
+
+A **job** is a single pipeline run identified by a `jobId` string you supply. Every piece of persistent state — status, checkpoint, and log — is scoped to that ID. Running `runPipeline` with the same `jobId` a second time either retries or resumes the job depending on the `retryMode` you specify.
+
+## Phase
+
+A **phase** is the smallest unit of work in a pipeline. It is a plain object with a `name` string and a `run` function typed as `(ctx: PhaseContext<TState>) => Promise<PhaseResult<TState>>`. Phases run one at a time; the result of each phase determines which phase (if any) runs next. See [Writing Phases](../phase-runner/phases) for the full shape.
+
+## Checkpoint
+
+A **checkpoint** is the serialized snapshot of a job's in-progress state. It records the name of the next phase to run, the current `state` value, and a `createdAt` timestamp. Checkpoints are written to the storage adapter after every successful phase and whenever `ctx.saveState` is called mid-phase. On error the checkpoint is preserved so the job can be resumed. See [Checkpoints](../phase-runner/checkpoints) for persistence and resume semantics.
+
+## Status
+
+A pipeline's **status** is one of five string literals defined by `PipelineStatus`:
+
+| Value | Meaning |
+|-------|---------|
+| `"idle"` | Job record exists but has never been started. |
+| `"running"` | A phase is scheduled or currently executing. |
+| `"paused"` | Reserved for external pause signals (not yet used by the core runner). |
+| `"complete"` | All phases finished successfully. |
+| `"error"` | A phase threw or returned `{ kind: "error" }`. |
+
+## Storage Adapter
+
+A **storage adapter** persists the job status, checkpoint, and log entries. The interface is `StorageAdapter<TState>` and includes `getJob`, `setStatus`, `setCheckpoint`, `appendLog`, and `clearLog`. The built-in `createMemoryStorage` keeps data in a `Map`; a Convex-backed adapter is available at `@claritylabs/cl-pipelines/convex`. See [Adapters](../adapters/overview) for the full interface.
+
+## Scheduler Adapter
+
+A **scheduler adapter** is responsible for invoking `advancePhase` after each phase completes. It exposes a single method, `scheduleAdvance(jobId, delayMs)`. The built-in `createMemoryScheduler` queues work in memory and exposes a `drain()` helper for tests. Production deployments swap this for a durable queue (e.g. Convex's scheduler). See [Adapters](../adapters/overview).
+
+## Retry Mode
+
+**Retry mode** controls what happens when you call `runPipeline` on a job that already has a checkpoint. `"resume"` picks up from the last saved checkpoint — cheap and safe. `"full"` discards the checkpoint and restarts from the initial phase and state — a full reset. See [Retry Modes](../phase-runner/retry).

@@ -1,8 +1,111 @@
 ---
 title: Writing Phases
-description: ''
+description: The Phase shape, PhaseContext API, PhaseResult union, and mid-phase checkpointing for long-running work.
 ---
 
 # Writing Phases
 
-_Content coming in Task 9._
+## The `Phase<TState>` shape
+
+```ts
+type Phase<TState> = {
+  name: string;
+  run: (ctx: PhaseContext<TState>) => Promise<PhaseResult<TState>>;
+};
+```
+
+`name` must be unique within the phases array passed to `runPipeline` — it is the key used to look up the next phase from a checkpoint.
+
+## `PhaseContext<TState>`
+
+`ctx` is the object injected into every `run` call:
+
+```ts
+type PhaseContext<TState> = {
+  /** The job ID passed to runPipeline. */
+  jobId: string;
+
+  /** The checkpoint that triggered this phase execution. */
+  checkpoint: Checkpoint<TState>;
+
+  /**
+   * Append a log entry for this job.
+   * level defaults to "info".
+   */
+  log: (message: string, level?: "info" | "warn" | "error") => Promise<void>;
+
+  /**
+   * Persist intermediate state without completing the phase.
+   * Use inside long loops so a crash can resume mid-work.
+   * The nextPhase in the written checkpoint is the current phase name,
+   * so advancePhase will re-run this phase from the saved state.
+   */
+  saveState: (state: TState) => Promise<void>;
+};
+```
+
+`ctx.checkpoint.state` is the `TState` value from the previous phase result (or `initialState` for the first phase).
+
+## `PhaseResult<TState>` union
+
+Return one of three shapes from `run`:
+
+```ts
+type PhaseResult<TState> =
+  | { kind: "next"; nextPhase: string; state: TState }
+  | { kind: "done" }
+  | { kind: "error"; error: string };
+```
+
+| `kind` | Effect |
+|--------|--------|
+| `"next"` | Writes a new checkpoint with `nextPhase` and `state`, then schedules another `advancePhase`. |
+| `"done"` | Clears the checkpoint and sets `status: "complete"`. |
+| `"error"` | Sets `status: "error"` with the error string. The checkpoint is preserved so the job can be resumed. |
+
+Throwing an unhandled error from `run` has the same storage effect as `{ kind: "error" }` — the status is set to `"error"` and the checkpoint is preserved — but it additionally re-throws a `PhaseError` so the caller can observe it.
+
+## Mid-phase checkpointing with `ctx.saveState`
+
+For long phases that process data in chunks (LLM streaming, batch file uploads, paginated API calls), call `ctx.saveState(state)` after each chunk. If the process crashes, the next `advancePhase` will re-run the same phase but with the last saved state, so you can resume from where you left off.
+
+```ts
+import type { Phase } from "@claritylabs/cl-pipelines";
+
+type ProcessState = {
+  items: string[];
+  results: string[];
+  chunkIndex: number;
+};
+
+const processItems: Phase<ProcessState> = {
+  name: "processItems",
+  run: async (ctx) => {
+    const { items, results, chunkIndex } = ctx.checkpoint.state;
+    let current = { results: [...results], chunkIndex };
+
+    for (let i = chunkIndex; i < items.length; i++) {
+      // Simulate per-item work (e.g. an LLM call).
+      const output = await expensiveTransform(items[i]);
+      current.results.push(output);
+      current.chunkIndex = i + 1;
+
+      // Persist progress after every item so a crash can resume here.
+      await ctx.saveState({ items, ...current });
+      await ctx.log(`processed item ${i + 1} of ${items.length}`);
+    }
+
+    return {
+      kind: "next",
+      nextPhase: "finalize",
+      state: { items, ...current },
+    };
+  },
+};
+
+async function expensiveTransform(item: string): Promise<string> {
+  return item.toUpperCase(); // placeholder
+}
+```
+
+When `saveState` is called, the stored checkpoint has `nextPhase` set to `"processItems"` (the current phase), so a crash and re-run will enter the same phase with `chunkIndex` pointing at the next unprocessed item.
