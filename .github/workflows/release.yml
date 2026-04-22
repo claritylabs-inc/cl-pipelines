@@ -1,0 +1,149 @@
+# Release workflow for @claritylabs/cl-pipelines + @claritylabs/cl-pipelines-docs
+#
+# Triggered by pushing a v* tag (e.g. v0.1.0).
+# Auth: npm OIDC trusted-publisher — no NPM_TOKEN secret required.
+#
+# Rollback policy: if either publish step fails, the workflow fails loudly.
+# We do NOT delete the tag on failure — tags are cheap and safe to leave in place.
+# Investigate the failure, fix the issue, delete and re-push the tag if needed.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  id-token: write   # required for OIDC npm trusted-publisher auth
+  contents: write   # required for creating GitHub releases
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  # Job 1: Build, verify, and publish @claritylabs/cl-pipelines
+  # ─────────────────────────────────────────────────────────────
+  publish-core:
+    name: Publish core package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 24 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Check if version already published
+        id: check
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          if npm view "@claritylabs/cl-pipelines@$PACKAGE_VERSION" version 2>/dev/null; then
+            echo "published=true" >> $GITHUB_OUTPUT
+          else
+            echo "published=false" >> $GITHUB_OUTPUT
+          fi
+          echo "version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Publish @claritylabs/cl-pipelines
+        if: steps.check.outputs.published == 'false'
+        run: npm publish --provenance --access public
+        # No NODE_AUTH_TOKEN — OIDC trusted-publisher handles authentication.
+
+      - name: Skip publish (already published)
+        if: steps.check.outputs.published == 'true'
+        run: |
+          echo "Version ${{ steps.check.outputs.version }} is already published — skipping."
+
+  # ─────────────────────────────────────────────────────────────
+  # Job 2: Publish @claritylabs/cl-pipelines-docs
+  # Only runs after publish-core succeeds.
+  # ─────────────────────────────────────────────────────────────
+  publish-docs:
+    name: Publish docs package
+    runs-on: ubuntu-latest
+    needs: publish-core
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 24 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Check if version already published
+        id: check
+        working-directory: docs-pkg
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          if npm view "@claritylabs/cl-pipelines-docs@$PACKAGE_VERSION" version 2>/dev/null; then
+            echo "published=true" >> $GITHUB_OUTPUT
+          else
+            echo "published=false" >> $GITHUB_OUTPUT
+          fi
+          echo "version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Publish @claritylabs/cl-pipelines-docs
+        if: steps.check.outputs.published == 'false'
+        working-directory: docs-pkg
+        run: npm publish --provenance --access public
+        # No NODE_AUTH_TOKEN — OIDC trusted-publisher handles authentication.
+
+      - name: Skip publish (already published)
+        if: steps.check.outputs.published == 'true'
+        run: |
+          echo "Version ${{ steps.check.outputs.version }} is already published — skipping."
+
+  # ─────────────────────────────────────────────────────────────
+  # Job 3: Create GitHub release from the tag
+  # Only runs after both publish jobs succeed.
+  # ─────────────────────────────────────────────────────────────
+  github-release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    needs: [publish-core, publish-docs]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read CHANGELOG
+        id: changelog
+        run: |
+          if [ -f CHANGELOG.md ]; then
+            # Extract the first release section (between first and second ## heading)
+            BODY=$(awk '/^## /{found++; if(found==2) exit} found==1{print}' CHANGELOG.md)
+            if [ -z "$BODY" ]; then
+              BODY="See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md) for details."
+            fi
+          else
+            BODY="See commit history for changes in this release."
+          fi
+          # Write to a temp file to avoid quoting issues with multi-line strings
+          echo "$BODY" > /tmp/release-body.md
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: /tmp/release-body.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
