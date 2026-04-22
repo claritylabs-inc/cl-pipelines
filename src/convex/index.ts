@@ -45,10 +45,25 @@ type ConvexCtxMinimal = {
  * References to Convex function definitions the consumer has wired up to
  * their pipeline-backed table. All are required.
  *
- * CONTRACT: the `getJob` query must return an object shaped like
- *   { status: PipelineStatus; checkpoint: Checkpoint | null; error?: string }
- * or null if the jobId is unknown. Consumers are responsible for shaping
- * this return value from their table row.
+ * CONTRACT — each function MUST implement the following semantics:
+ *
+ * `getJob({ jobId })` — must return
+ *   `{ status: PipelineStatus; checkpoint: Checkpoint | null; error?: string } | null`.
+ *   Return null for unknown IDs. Consumers are responsible for shaping the
+ *   return value from their table row.
+ *
+ * `setStatus({ jobId, status, error })` — MUST patch the row's `pipelineStatus`
+ *   to `status` AND patch `pipelineError` to `error ?? undefined`. When `error`
+ *   is null, it means "clear the error". Do NOT conditionally skip the patch
+ *   when `error` is nullish — the runtime relies on retries clearing stale errors.
+ *
+ * `setCheckpoint({ jobId, checkpoint })` — must patch `pipelineCheckpoint` to
+ *   `checkpoint`. When `checkpoint` is null/undefined, clear the field.
+ *
+ * `appendLog({ jobId, timestamp, message, phase?, level? })` — must append one
+ *   entry to the row's `pipelineLog` array, creating the array if absent.
+ *
+ * `clearLog({ jobId })` — must set `pipelineLog` to an empty array `[]`.
  */
 export type ConvexPipelineMutations = {
   getJob: unknown;
@@ -71,7 +86,10 @@ export function createConvexStorageAdapter<TState>(config: {
       return result;
     },
     async setStatus(jobId, status, error) {
-      await ctx.runMutation(mutations.setStatus, { jobId, status, error });
+      // Pass error explicitly — consumers' setStatus mutation must patch
+      // pipelineError to undefined when error is not provided, so a retry
+      // clears any prior error.
+      await ctx.runMutation(mutations.setStatus, { jobId, status, error: error ?? null });
     },
     async setCheckpoint(jobId, checkpoint) {
       await ctx.runMutation(mutations.setCheckpoint, { jobId, checkpoint });
