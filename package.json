@@ -1,0 +1,63 @@
+{
+  "name": "@claritylabs/cl-pipelines",
+  "version": "0.1.0",
+  "description": "Runtime-agnostic long-running jobs + agent primitives with Convex adapter and UI",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./convex": {
+      "types": "./dist/convex.d.ts",
+      "import": "./dist/convex.mjs",
+      "require": "./dist/convex.js"
+    },
+    "./ui": {
+      "types": "./dist/ui.d.ts",
+      "import": "./dist/ui.mjs",
+      "require": "./dist/ui.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "peerDependencies": {
+    "zod": ">=3.22.0",
+    "convex": ">=1.17.0",
+    "react": ">=18.0.0",
+    "ai": ">=6.0.0"
+  },
+  "peerDependenciesMeta": {
+    "convex": { "optional": true },
+    "react": { "optional": true },
+    "ai": { "optional": true }
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "ai": "^6.0.0",
+    "convex": "^1.17.0",
+    "react": "^19.0.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.4",
+    "zod": "^3.24.0"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/claritylabs-inc/cl-pipelines.git"
+  },
+  "license": "Apache-2.0"
+}

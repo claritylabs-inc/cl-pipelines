@@ -1,0 +1,25 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.worktrees/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Claude Code local state
+.claude/
+
+# Internal dev artifacts (specs, plans)
+.dev/
+
+# Editor / IDE settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment files
+.env
+.env.*
+!.env.example
