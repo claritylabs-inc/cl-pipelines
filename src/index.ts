@@ -5,3 +5,4 @@ export * from "./core/retry";
 export * from "./adapters";
 export { createMemoryStorage, createMemoryScheduler } from "./adapters/memory";
 export type { MemoryStorage, MemoryScheduler } from "./adapters/memory";
+export * from "./agent";
