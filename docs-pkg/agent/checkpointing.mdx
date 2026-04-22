@@ -1,8 +1,106 @@
 ---
 title: Agent Checkpointing
-description: ''
+description: How AgentCheckpoint persists conversation state between turns, enabling crash-safe resume.
 ---
 
 # Agent Checkpointing
 
-_Content coming in Task 9._
+Every time the agent loop completes a turn, cl-pipelines writes a checkpoint to your storage
+adapter. This makes the conversation durable: if a function times out or crashes mid-run,
+the next invocation starts from the saved checkpoint rather than from scratch.
+
+## `AgentCheckpoint` shape
+
+```ts
+type AgentCheckpoint = {
+  /** Full message history up to and including the last tool-result messages. */
+  messages: AgentTurn[];
+
+  /**
+   * Reserved for v0.2 mid-tool resumption. In v0.1, tool calls are always
+   * drained synchronously inside a single phase invocation, so this array
+   * is always empty at checkpoint boundaries.
+   */
+  pendingToolCalls: Array<{ id: string; name: string; args: unknown }>;
+
+  /** How many turns have been completed so far. */
+  turn: number;
+};
+```
+
+## `AgentTurn` = `ModelMessage`
+
+```ts
+// from src/agent/types.ts
+import type { ModelMessage } from "ai";
+export type AgentTurn = ModelMessage;
+```
+
+`AgentTurn` is a direct alias for the AI SDK's `ModelMessage`. No conversion is needed —
+you can feed the saved messages straight back into `generateText({ messages })`:
+
+```ts
+const { messages } = checkpoint.state; // AgentTurn[] === ModelMessage[]
+const result = await generateText({ model, messages });
+```
+
+## What is persisted at each turn boundary
+
+After every call to `generateText`, the phase appends `result.response.messages` (which
+includes the assistant message and any tool-result messages) to the running history, then
+writes the next checkpoint via `ctx.saveState`:
+
+```ts
+const nextState: AgentCheckpoint = {
+  messages: [...previousMessages, ...result.response.messages],
+  pendingToolCalls: [], // always empty in v0.1
+  turn: turn + 1,
+};
+```
+
+The checkpoint is stored in your `StorageAdapter` via `setCheckpoint(jobId, checkpoint)`.
+
+## `pendingToolCalls` — reserved
+
+In v0.1, all tool calls are executed synchronously within a single phase invocation by the
+AI SDK's `generateText`. The `pendingToolCalls` field is reserved for a planned v0.2 feature
+that will allow resuming mid-tool (e.g., after a function timeout fires partway through
+executing a long-running tool). Do not rely on this field — it will always be empty at
+checkpoint write time in v0.1.
+
+## Resume behavior
+
+The `retryMode` option controls what happens when `runAgent` is called for a job that already
+has a checkpoint:
+
+| `retryMode` | Starting state |
+|---|---|
+| `undefined` or `"resume"` (default) | Starts from the saved `messages` (full history intact). The turn counter continues from where it left off. |
+| `"full"` | Discards the checkpoint. Starts from `initialMessages` with `turn: 0`. |
+
+Pass `retryMode` when calling `runAgent`:
+
+```ts
+await runAgent({
+  jobId: "job-001",
+  retryMode: "resume", // default
+  // ...
+});
+
+// Or from a UI "Restart" action:
+await runAgent({
+  jobId: "job-001",
+  retryMode: "full",
+  // ...
+});
+```
+
+## `maxTurns` and the `complete` status
+
+When `turn >= maxTurns`, the phase logs a `warn`-level entry and returns `kind: "done"`.
+`advancePhase` then calls `setCheckpoint(jobId, null)` (clearing the checkpoint) and
+`setStatus(jobId, "complete")`.
+
+The job status is `"complete"`, not `"error"`. The agent ran to its configured limit and was
+conclusively stopped. If you want to treat a maxTurns condition as an error, check the log
+entries for the `"agent: maxTurns"` message in your own application logic.

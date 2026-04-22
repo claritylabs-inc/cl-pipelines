@@ -1,8 +1,54 @@
 ---
-title: Overview
-description: ''
+title: UI Overview
+description: Headless React primitives for surfacing pipeline status, logs, and retry actions in any design system.
 ---
 
-# Overview
+# UI Overview
 
-_Content coming in Task 9._
+`@claritylabs/cl-pipelines/ui` ships **headless primitives only** — no styles, no design tokens.
+Consumers (glass, spot, prism) apply their own design system via CSS or utility classes.
+
+## Peer dependency
+
+React 18 or later is required.
+
+## What's in the box
+
+| Export | Purpose |
+|---|---|
+| `StatusBanner` | Compound component: `Root`, `Indicator`, `Title`, `Description`, `Actions` |
+| `ProgressLog` | Scrollable list of `LogEntry` items |
+| `RetryButtons` | Resume + restart buttons with pluggable render |
+
+## Install / import
+
+```ts
+import {
+  StatusBanner,
+  ProgressLog,
+  RetryButtons,
+} from "@claritylabs/cl-pipelines/ui";
+```
+
+## Data attributes
+
+Every primitive emits `data-*` attributes so you can target them from any CSS strategy:
+
+| Attribute | Component | Values |
+|---|---|---|
+| `data-status` | `StatusBanner.Root` | `"running"` \| `"paused"` \| `"error"` |
+| `data-indicator` | `StatusBanner.Indicator` | same as `data-status` |
+| `data-role` | most primitives | `"title"` \| `"description"` \| `"actions"` \| `"progress-log"` \| `"retry-buttons"` |
+| `data-level` | `ProgressLog` list items | `"info"` \| `"warn"` \| `"error"` |
+| `data-phase` | `ProgressLog` list items | the phase name string, or absent |
+| `data-retry-mode` | `RetryButtons` buttons | `"resume"` \| `"full"` |
+
+## Idle and complete states
+
+`StatusBanner.Root` renders `null` when `status` is `"idle"`, `"complete"`, or `undefined`.
+You don't need to conditionally render it yourself — just always pass the current status.
+
+## Next steps
+
+- [Primitives](/ui/primitives) — full prop reference for every component.
+- [Composing a Banner](/ui/composing) — end-to-end Tailwind and plain CSS examples.

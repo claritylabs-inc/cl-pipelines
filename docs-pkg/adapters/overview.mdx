@@ -1,8 +1,102 @@
 ---
-title: Overview
-description: ''
+title: Adapters Overview
+description: StorageAdapter and SchedulerAdapter — the two interfaces that connect cl-pipelines to any backend.
 ---
 
-# Overview
+# Adapters Overview
 
-_Content coming in Task 9._
+cl-pipelines is backend-agnostic. It talks to your infrastructure through two narrow interfaces:
+
+- **`StorageAdapter<TState>`** — reads and writes job state (status, checkpoint, log).
+- **`SchedulerAdapter`** — triggers the next `advancePhase` call.
+
+Keeping these concerns separate means you can swap your database without touching your
+scheduler, and vice versa.
+
+## `StorageAdapter<TState>`
+
+```ts
+type StorageAdapter<TState> = {
+  /** Return null if the job does not exist. Never throw for unknown IDs. */
+  getJob(jobId: string): Promise<{
+    status: PipelineStatus;
+    checkpoint: Checkpoint<TState> | null;
+    error?: string;
+  } | null>;
+
+  setStatus(jobId: string, status: PipelineStatus, error?: string): Promise<void>;
+
+  /** Pass null to clear the checkpoint (called when the job reaches "done"). */
+  setCheckpoint(jobId: string, checkpoint: Checkpoint<TState> | null): Promise<void>;
+
+  appendLog(jobId: string, entry: LogEntry): Promise<void>;
+
+  clearLog(jobId: string): Promise<void>;
+};
+```
+
+## `SchedulerAdapter`
+
+```ts
+type SchedulerAdapter = {
+  /**
+   * Schedule the next advancePhase call for jobId.
+   * delayMs is advisory — implementations may round up or ignore it.
+   */
+  scheduleAdvance(jobId: string, delayMs: number): Promise<void>;
+};
+```
+
+The scheduler's only job is to eventually invoke `advancePhase` with the given `jobId`. It
+is allowed to run later (durable queue, Convex scheduler, cron, in-process queue) — the
+phase runner makes no timing assumptions.
+
+## In-memory adapters (testing)
+
+For unit tests and local scripts, use the built-in memory adapters:
+
+```ts
+import {
+  createMemoryStorage,
+  createMemoryScheduler,
+} from "@claritylabs/cl-pipelines";
+import type { AgentCheckpoint } from "@claritylabs/cl-pipelines";
+
+const storage = createMemoryStorage<AgentCheckpoint>();
+const scheduler = createMemoryScheduler();
+```
+
+### `_bind` — test-only hook
+
+`MemoryScheduler` has a `_bind(fn)` method that wires up what `scheduleAdvance` will
+actually call. In tests you bind it to `advancePhase` directly:
+
+```ts
+import { advancePhase } from "@claritylabs/cl-pipelines";
+
+scheduler._bind(async (jobId) => {
+  await advancePhase({ jobId, phases, storage, scheduler });
+});
+
+// After runAgent / runPipeline, drain the queue to run all scheduled advances:
+await scheduler.drain();
+```
+
+`_bind` is **test-only**. In production, `scheduleAdvance` delegates to your durable
+scheduler (e.g., Convex `ctx.scheduler.runAfter`).
+
+### `_inspect` — test-only hook
+
+`MemoryStorage` exposes `_inspect()` which returns the raw `Map` of jobs, useful for
+asserting state in tests:
+
+```ts
+const jobs = storage._inspect();
+const job = jobs.get("job-001");
+console.log(job?.status); // "complete"
+```
+
+## Next steps
+
+- [Convex adapter](/adapters/convex) — production-ready integration with Convex.
+- [Writing your own](/adapters/writing-your-own) — implement the two interfaces for any backend.

@@ -1,8 +1,244 @@
 ---
 title: Composing a Banner
-description: ''
+description: End-to-end composition examples using Tailwind/shadcn and plain CSS.
 ---
 
 # Composing a Banner
 
-_Content coming in Task 9._
+The primitives are unstyled — you bring the visual layer. Here are two complete examples.
+
+## Example 1: Tailwind + shadcn
+
+This example uses Tailwind utility classes and the shadcn `<Button>` component via `renderButton`.
+
+```tsx
+// components/extraction-banner.tsx
+"use client";
+import {
+  StatusBanner,
+  ProgressLog,
+  RetryButtons,
+  type RetryMode,
+} from "@claritylabs/cl-pipelines/ui";
+import type { PipelineStatus, LogEntry } from "@claritylabs/cl-pipelines";
+import { Button } from "@/components/ui/button"; // shadcn button
+import { Loader2, AlertCircle, PauseCircle } from "lucide-react";
+import { useAction } from "convex/react";
+import { api } from "@/convex/_generated/api";
+
+const statusIcons: Record<string, React.ReactNode> = {
+  running: <Loader2 className="h-4 w-4 animate-spin" />,
+  error: <AlertCircle className="h-4 w-4 text-destructive" />,
+  paused: <PauseCircle className="h-4 w-4 text-muted-foreground" />,
+};
+
+export function ExtractionBanner({
+  applicationId,
+  status,
+  error,
+  log,
+  initialPrompt,
+}: {
+  applicationId: string;
+  status: PipelineStatus | undefined;
+  error?: string;
+  log?: LogEntry[];
+  initialPrompt: string;
+}) {
+  const retry = useAction(api.applications.retryExtraction);
+
+  const handleRetry = (mode: RetryMode) => {
+    retry({ applicationId, mode, userMessage: initialPrompt });
+  };
+
+  return (
+    <StatusBanner
+      status={status}
+      error={error}
+      log={log}
+      className="rounded-lg border bg-card p-4 shadow-sm"
+    >
+      <div className="flex items-start gap-3">
+        <StatusBanner.Indicator
+          render={(s) => statusIcons[s] ?? null}
+        />
+        <div className="flex-1 min-w-0">
+          <StatusBanner.Title className="text-sm font-medium" />
+          <StatusBanner.Description className="text-xs text-muted-foreground mt-0.5" />
+
+          <ProgressLog
+            entries={log}
+            limit={5}
+            className="mt-2 space-y-0.5"
+            renderEntry={(entry) => (
+              <li
+                key={entry.timestamp}
+                data-level={entry.level}
+                className="text-xs text-muted-foreground truncate
+                  data-[level=warn]:text-yellow-600
+                  data-[level=error]:text-destructive"
+              >
+                {entry.message}
+              </li>
+            )}
+          />
+        </div>
+
+        <StatusBanner.Actions className="shrink-0">
+          {status === "error" && (
+            <RetryButtons
+              onRetry={handleRetry}
+              className="flex gap-2"
+              renderButton={(mode, onClick, label) => (
+                <Button
+                  key={mode}
+                  variant={mode === "full" ? "outline" : "default"}
+                  size="sm"
+                  onClick={onClick}
+                >
+                  {label}
+                </Button>
+              )}
+            />
+          )}
+        </StatusBanner.Actions>
+      </div>
+    </StatusBanner>
+  );
+}
+```
+
+Usage:
+
+```tsx
+// In your application detail page
+import { ExtractionBanner } from "@/components/extraction-banner";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
+
+export function ApplicationPage({ id }: { id: string }) {
+  const app = useQuery(api.applications.get, { id });
+
+  return (
+    <div className="space-y-4">
+      <ExtractionBanner
+        applicationId={id}
+        status={app?.pipelineStatus}
+        error={app?.pipelineError}
+        log={app?.pipelineLog}
+        initialPrompt="Extract all fields from this application."
+      />
+      {/* rest of page */}
+    </div>
+  );
+}
+```
+
+---
+
+## Example 2: Plain CSS
+
+Same banner, styled with a co-located CSS file targeting `data-*` attributes.
+
+```tsx
+// components/extraction-banner.tsx
+"use client";
+import {
+  StatusBanner,
+  ProgressLog,
+  RetryButtons,
+  type RetryMode,
+} from "@claritylabs/cl-pipelines/ui";
+import type { PipelineStatus, LogEntry } from "@claritylabs/cl-pipelines";
+import { useAction } from "convex/react";
+import { api } from "@/convex/_generated/api";
+import "./extraction-banner.css";
+
+export function ExtractionBanner({
+  applicationId,
+  status,
+  error,
+  log,
+  initialPrompt,
+}: {
+  applicationId: string;
+  status: PipelineStatus | undefined;
+  error?: string;
+  log?: LogEntry[];
+  initialPrompt: string;
+}) {
+  const retry = useAction(api.applications.retryExtraction);
+
+  return (
+    <StatusBanner
+      status={status}
+      error={error}
+      log={log}
+      className="extraction-banner"
+    >
+      <StatusBanner.Indicator className="extraction-banner__indicator" />
+      <div className="extraction-banner__body">
+        <StatusBanner.Title className="extraction-banner__title" />
+        <StatusBanner.Description className="extraction-banner__description" />
+        <ProgressLog entries={log} limit={5} className="extraction-banner__log" />
+      </div>
+      <StatusBanner.Actions className="extraction-banner__actions">
+        {status === "error" && (
+          <RetryButtons
+            onRetry={(mode: RetryMode) =>
+              retry({ applicationId, mode, userMessage: initialPrompt })
+            }
+            className="extraction-banner__retry"
+          />
+        )}
+      </StatusBanner.Actions>
+    </StatusBanner>
+  );
+}
+```
+
+```css
+/* components/extraction-banner.css */
+
+.extraction-banner {
+  display: flex;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+/* Status-specific backgrounds */
+.extraction-banner[data-status="running"] { border-color: var(--color-info); }
+.extraction-banner[data-status="paused"]  { border-color: var(--color-warning); }
+.extraction-banner[data-status="error"]   { border-color: var(--color-error); }
+
+/* Indicator dot */
+.extraction-banner__indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 6px;
+  background: var(--color-muted);
+}
+[data-indicator="running"] { background: var(--color-info); animation: pulse 1s infinite; }
+[data-indicator="paused"]  { background: var(--color-warning); }
+[data-indicator="error"]   { background: var(--color-error); }
+
+/* Log entries */
+.extraction-banner__log { list-style: none; padding: 0; margin: 4px 0 0; }
+.extraction-banner__log li { font-size: 12px; color: var(--color-muted-fg); }
+.extraction-banner__log li[data-level="warn"]  { color: var(--color-warning); }
+.extraction-banner__log li[data-level="error"] { color: var(--color-error); }
+
+/* Retry buttons */
+.extraction-banner__retry { display: flex; gap: 8px; }
+[data-retry-mode="resume"] { /* primary style */ }
+[data-retry-mode="full"]   { /* outline style */ }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+```

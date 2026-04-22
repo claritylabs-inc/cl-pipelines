@@ -1,8 +1,118 @@
 ---
 title: Tools
-description: ''
+description: How to define and use tools inside a runAgent loop using the AI SDK v6 tool() factory.
 ---
 
 # Tools
 
-_Content coming in Task 9._
+Agent tools are defined with the AI SDK v6 `tool()` factory. Each tool has an `inputSchema`
+(Zod) and an async `execute` function. When the model emits a tool call, the SDK runs `execute`
+and appends a `role: "tool"` message to the conversation automatically.
+
+> **v6 vs v5.** The v6 factory uses `inputSchema`, not `parameters`. If you see `parameters`
+> in examples or older docs, they are using the v5 API. Always use `inputSchema`.
+
+## Defining a tool
+
+```ts
+import { tool } from "ai";
+import { z } from "zod";
+
+const lookupPolicy = tool({
+  description: "Look up a policy by number and return its summary.",
+  inputSchema: z.object({
+    policyNumber: z.string().describe("The policy number, e.g. POL-00123"),
+  }),
+  execute: async ({ policyNumber }) => {
+    // fetch from your database or API
+    const policy = await db.policies.findByNumber(policyNumber);
+    if (!policy) return { found: false };
+    return { found: true, summary: policy.summary, status: policy.status };
+  },
+});
+```
+
+Pass tools to `runAgent` or `buildAgentPhase`:
+
+```ts
+import { runAgent } from "@claritylabs/cl-pipelines";
+import { gateway } from "ai";
+
+await runAgent({
+  jobId: "job-002",
+  model: gateway("anthropic/claude-opus-4.7"),
+  tools: { lookupPolicy },
+  system: "You are a policy assistant.",
+  initialMessages: [
+    { role: "user", content: "What is the status of policy POL-00123?" },
+  ],
+  storage,
+  scheduler,
+});
+```
+
+## Tool result messages
+
+When the model calls `lookupPolicy`, the SDK:
+
+1. Calls `execute({ policyNumber: "POL-00123" })`.
+2. Wraps the return value in a `role: "tool"` message.
+3. Appends that message to `result.response.messages`.
+
+cl-pipelines then appends `result.response.messages` to the checkpoint's `messages` array,
+so the tool result is visible to the model on the next turn.
+
+The resulting message history looks like:
+
+```ts
+[
+  { role: "user",      content: "What is the status of policy POL-00123?" },
+  { role: "assistant", content: [{ type: "tool-call", toolCallId: "...", toolName: "lookupPolicy", args: { policyNumber: "POL-00123" } }] },
+  { role: "tool",      content: [{ type: "tool-result", toolCallId: "...", result: { found: true, summary: "...", status: "active" } }] },
+]
+```
+
+This is exactly what `generateText({ messages })` expects on the next turn — no conversion needed.
+
+## Multiple tools
+
+Pass as many tools as needed. The model decides which (if any) to call:
+
+```ts
+await runAgent({
+  jobId: "job-003",
+  model: gateway("anthropic/claude-opus-4.7"),
+  tools: { lookupPolicy, getClientInfo, sendEmail },
+  // ...
+});
+```
+
+## Long-running tools
+
+In v0.1, all tool execution is synchronous within a single phase invocation. If a tool does
+something expensive (e.g., calling an external API that takes 10+ seconds), consider two
+alternatives:
+
+1. **Keep it in `execute`** — as long as it finishes within your serverless function timeout,
+   this is fine. The checkpoint is written _after_ the phase, so a mid-tool crash means the
+   turn is replayed from the saved checkpoint.
+2. **Extract into its own phase** — if the tool is so slow it would exceed your timeout,
+   extract the work into a dedicated pipeline phase that runs before the agent phase. Pass its
+   result to the agent via `initialMessages` or the phase's checkpoint state.
+
+## Schema tips
+
+- Use `.describe()` on every field — the model reads descriptions to decide how to call the tool.
+- Keep `inputSchema` focused. Fewer fields = less chance of hallucinated arguments.
+- Return structured objects, not raw strings, so downstream phases can parse results reliably.
+
+```ts
+// Good — structured, described
+inputSchema: z.object({
+  policyNumber: z.string().describe("Policy number in format POL-XXXXX"),
+  includeHistory: z.boolean().optional().describe("Include claims history in response"),
+}),
+
+// Avoid — untyped, no descriptions
+inputSchema: z.object({ query: z.string() }),
+```

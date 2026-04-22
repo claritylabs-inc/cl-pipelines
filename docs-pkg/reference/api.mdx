@@ -1,8 +1,420 @@
 ---
 title: API Reference
-description: ''
+description: Exhaustive type and function signatures for every public export, copied verbatim from source.
 ---
 
 # API Reference
 
-_Content coming in Task 9._
+## Core — `@claritylabs/cl-pipelines`
+
+---
+
+### `runPipeline<TState>(args)`
+
+```ts
+type RunPipelineArgs<TState> = {
+  jobId: string;
+  phases: Phase<TState>[];
+  storage: StorageAdapter<TState>;
+  scheduler: SchedulerAdapter;
+  retryMode?: RetryMode;
+  initialState: TState;
+  initialPhase?: string;
+};
+
+async function runPipeline<TState>(args: RunPipelineArgs<TState>): Promise<void>
+```
+
+Seeds the pipeline: sets status to `"running"`, writes the initial checkpoint, and calls
+`scheduler.scheduleAdvance`. Does not run any phase itself — `advancePhase` is responsible
+for phase execution.
+
+---
+
+### `advancePhase<TState>(args)`
+
+```ts
+type AdvancePhaseArgs<TState> = {
+  jobId: string;
+  phases: Phase<TState>[];
+  storage: StorageAdapter<TState>;
+  scheduler: SchedulerAdapter;
+};
+
+async function advancePhase<TState>(args: AdvancePhaseArgs<TState>): Promise<void>
+```
+
+Loads the current checkpoint, finds the matching phase, runs it, and either schedules the
+next advance or marks the job complete / error. This is the function your scheduler action
+calls on every invocation.
+
+---
+
+### `resolveStartPhase<TState>(mode, checkpoint, initialPhase)`
+
+```ts
+function resolveStartPhase<TState>(
+  mode: RetryMode | undefined,
+  checkpoint: Checkpoint<TState> | null,
+  initialPhase: string,
+): string
+```
+
+Returns the phase name to start from. If `mode === "full"` or `checkpoint` is null, returns
+`initialPhase`. Otherwise returns `checkpoint.nextPhase`. Used internally by `runPipeline`.
+
+---
+
+## Core types
+
+### `PipelineStatus`
+
+```ts
+type PipelineStatus = "idle" | "running" | "paused" | "complete" | "error";
+```
+
+### `LogEntry`
+
+```ts
+type LogEntry = {
+  timestamp: number;
+  message: string;
+  phase?: string;
+  level?: "info" | "warn" | "error";
+};
+```
+
+### `Checkpoint<TState>`
+
+```ts
+type Checkpoint<TState = unknown> = {
+  nextPhase: string;
+  state: TState;
+  createdAt: number;
+};
+```
+
+### `Phase<TState>`
+
+```ts
+type Phase<TState> = {
+  name: string;
+  run: (ctx: PhaseContext<TState>) => Promise<PhaseResult<TState>>;
+};
+```
+
+### `PhaseContext<TState>`
+
+```ts
+type PhaseContext<TState> = {
+  jobId: string;
+  checkpoint: Checkpoint<TState>;
+  log: (message: string, level?: "info" | "warn" | "error") => Promise<void>;
+  saveState: (state: TState) => Promise<void>;
+};
+```
+
+### `PhaseResult<TState>`
+
+```ts
+type PhaseResult<TState> =
+  | { kind: "next"; nextPhase: string; state: TState }
+  | { kind: "done" }
+  | { kind: "error"; error: string };
+```
+
+### `RetryMode`
+
+```ts
+type RetryMode = "resume" | "full";
+```
+
+---
+
+## Errors
+
+### `PipelineError`
+
+```ts
+class PipelineError extends Error {
+  constructor(message: string, public readonly jobId: string, public readonly phase?: string)
+}
+```
+
+Base error class. `name` is `"PipelineError"`.
+
+### `PhaseError`
+
+```ts
+class PhaseError extends PipelineError {
+  constructor(
+    message: string,
+    jobId: string,
+    phase: string,
+    public readonly recoverable: boolean,
+  )
+}
+```
+
+Thrown by `advancePhase` when a phase throws unexpectedly. `name` is `"PhaseError"`.
+
+---
+
+## Adapters — `@claritylabs/cl-pipelines`
+
+### `StorageAdapter<TState>` (interface)
+
+```ts
+type StorageAdapter<TState> = {
+  getJob(jobId: string): Promise<{
+    status: PipelineStatus;
+    checkpoint: Checkpoint<TState> | null;
+    error?: string;
+  } | null>;
+  setStatus(jobId: string, status: PipelineStatus, error?: string): Promise<void>;
+  setCheckpoint(jobId: string, checkpoint: Checkpoint<TState> | null): Promise<void>;
+  appendLog(jobId: string, entry: LogEntry): Promise<void>;
+  clearLog(jobId: string): Promise<void>;
+};
+```
+
+### `SchedulerAdapter` (interface)
+
+```ts
+type SchedulerAdapter = {
+  scheduleAdvance(jobId: string, delayMs: number): Promise<void>;
+};
+```
+
+### `createMemoryStorage<TState>()`
+
+```ts
+type MemoryStorage<TState> = StorageAdapter<TState> & {
+  _inspect(): Map<string, {
+    status: PipelineStatus;
+    checkpoint: Checkpoint<TState> | null;
+    error?: string;
+    log: LogEntry[];
+  }>;
+};
+
+function createMemoryStorage<TState>(): MemoryStorage<TState>
+```
+
+Returns an in-memory `StorageAdapter`. `_inspect()` is a test-only escape hatch.
+
+### `createMemoryScheduler()`
+
+```ts
+type MemoryScheduler = SchedulerAdapter & {
+  drain(): Promise<void>;
+  pending(): number;
+  _bind(fn: (jobId: string) => Promise<void>): void;
+};
+
+function createMemoryScheduler(): MemoryScheduler
+```
+
+Returns an in-memory `SchedulerAdapter`. Use `_bind` to wire up `advancePhase` in tests,
+then `drain()` to flush all queued advances.
+
+---
+
+## Agent — `@claritylabs/cl-pipelines`
+
+### `runAgent<TOOLS>(args)`
+
+```ts
+type RunAgentArgs<TOOLS extends ToolSet = ToolSet> = {
+  jobId: string;
+  model: LanguageModel;
+  tools?: TOOLS;
+  system?: string;
+  initialMessages: AgentTurn[];
+  maxTurns?: number;
+  storage: StorageAdapter<AgentCheckpoint>;
+  scheduler: SchedulerAdapter;
+  retryMode?: RetryMode;
+};
+
+async function runAgent<TOOLS extends ToolSet = ToolSet>(
+  args: RunAgentArgs<TOOLS>,
+): Promise<void>
+```
+
+Convenience wrapper: builds a single-phase pipeline using `buildAgentPhase` and calls
+`runPipeline`. Equivalent to calling `buildAgentPhase` + `runPipeline` yourself.
+
+### `buildAgentPhase<TOOLS>(opts)`
+
+```ts
+type BuildAgentPhaseOpts<TOOLS extends ToolSet = ToolSet> = {
+  model: LanguageModel;
+  tools?: TOOLS;
+  system?: string;
+  maxTurns?: number;
+};
+
+type AgentPhase = Phase<AgentCheckpoint>;
+
+function buildAgentPhase<TOOLS extends ToolSet = ToolSet>(
+  opts: BuildAgentPhaseOpts<TOOLS>,
+): Phase<AgentCheckpoint>
+```
+
+Returns a single `Phase<AgentCheckpoint>` named `"turn"`. Use this when you want to compose
+the agent turn into a larger multi-phase pipeline.
+
+### `AgentTurn`
+
+```ts
+import type { ModelMessage } from "ai";
+type AgentTurn = ModelMessage;
+```
+
+Direct alias for the AI SDK's `ModelMessage`. Wire-compatible with `generateText({ messages })`.
+
+### `AgentCheckpoint`
+
+```ts
+type AgentCheckpoint = {
+  messages: AgentTurn[];
+  pendingToolCalls: Array<{ id: string; name: string; args: unknown }>;
+  turn: number;
+};
+```
+
+`pendingToolCalls` is reserved for v0.2. Always empty at checkpoint boundaries in v0.1.
+
+---
+
+## Convex — `@claritylabs/cl-pipelines/convex`
+
+### `pipelineFields()`
+
+```ts
+function pipelineFields(): {
+  pipelineStatus: VOptional<VUnion<...>>;
+  pipelineError: VOptional<VString>;
+  pipelineCheckpoint: VOptional<VAny>;
+  pipelineLog: VOptional<VArray<VObject<...>>>;
+}
+```
+
+Spread into a `defineTable` call to add all pipeline fields to your Convex table.
+
+### `ConvexPipelineMutations`
+
+```ts
+type ConvexPipelineMutations = {
+  getJob: unknown;       // internalQuery — returns { status, checkpoint, error? } | null
+  setStatus: unknown;    // internalMutation
+  setCheckpoint: unknown; // internalMutation
+  appendLog: unknown;    // internalMutation
+  clearLog: unknown;     // internalMutation
+};
+```
+
+Pass references from `internal.*` generated by Convex.
+
+### `createConvexStorageAdapter<TState>(config)`
+
+```ts
+function createConvexStorageAdapter<TState>(config: {
+  ctx: {
+    runMutation: (fn: unknown, args: unknown) => Promise<unknown>;
+    runQuery: (fn: unknown, args: unknown) => Promise<unknown>;
+    scheduler?: { runAfter: (delayMs: number, fn: unknown, args: unknown) => Promise<unknown> };
+  };
+  mutations: ConvexPipelineMutations;
+}): StorageAdapter<TState>
+```
+
+### `createConvexSchedulerAdapter(config)`
+
+```ts
+function createConvexSchedulerAdapter(config: {
+  ctx: {
+    scheduler?: { runAfter: (delayMs: number, fn: unknown, args: unknown) => Promise<unknown> };
+  };
+  advanceAction: unknown;
+  jobIdArgName?: string; // default: "jobId"
+}): SchedulerAdapter
+```
+
+`jobIdArgName` lets you rename the argument key passed to `advanceAction` if your internal
+action uses a name other than `"jobId"`.
+
+---
+
+## UI — `@claritylabs/cl-pipelines/ui`
+
+### `StatusBanner`
+
+```ts
+const StatusBanner: typeof StatusBannerRoot & {
+  Root: typeof StatusBannerRoot;
+  Indicator: typeof StatusBannerIndicator;
+  Title: typeof StatusBannerTitle;
+  Description: typeof StatusBannerDescription;
+  Actions: typeof StatusBannerActions;
+};
+```
+
+**`StatusBannerRoot`** props:
+```ts
+{ status: PipelineStatus | undefined; error?: string; log?: LogEntry[]; children: React.ReactNode; className?: string }
+```
+
+**`StatusBannerIndicator`** props:
+```ts
+{ className?: string; render?: (status: PipelineStatus) => React.ReactNode }
+```
+
+**`StatusBannerTitle`** props:
+```ts
+{ children?: React.ReactNode; className?: string }
+```
+
+**`StatusBannerDescription`** props:
+```ts
+{ children?: React.ReactNode; className?: string }
+```
+
+**`StatusBannerActions`** props:
+```ts
+{ children: React.ReactNode; className?: string }
+```
+
+### `ProgressLog`
+
+```ts
+function ProgressLog(props: {
+  entries: LogEntry[] | undefined;
+  latestOnly?: boolean;
+  limit?: number;        // default: 10
+  className?: string;
+  renderEntry?: (entry: LogEntry, i: number) => React.ReactNode;
+}): React.ReactElement | null
+```
+
+### `RetryButtons`
+
+```ts
+type RetryMode = "resume" | "full";
+
+function RetryButtons(props: {
+  onRetry: (mode: RetryMode) => void;
+  disabled?: boolean;
+  labels?: { resume?: string; full?: string };
+  renderButton?: (
+    mode: RetryMode,
+    onClick: () => void,
+    label: string,
+    disabled: boolean,
+  ) => React.ReactNode;
+  className?: string;
+}): React.ReactElement
+```
+
+`RetryMode` is re-exported from `@claritylabs/cl-pipelines/ui` for convenience.

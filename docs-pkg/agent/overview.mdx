@@ -1,8 +1,116 @@
 ---
-title: Overview
-description: ''
+title: Agent Overview
+description: runAgent — a phase-runner-backed LLM-plus-tools loop with automatic checkpointing and crash recovery.
 ---
 
-# Overview
+# Agent Overview
 
-_Content coming in Task 9._
+`runAgent` is a thin wrapper around `runPipeline` that drives a multi-turn LLM conversation.
+Each turn is a single pipeline phase named `"turn"`. The AI SDK's `generateText` handles the
+LLM call; cl-pipelines handles durability, retry, and scheduling.
+
+## When to use `runAgent`
+
+| Scenario | Recommendation |
+|---|---|
+| One-shot prompt, no tools | Call `generateText` directly |
+| Multi-turn tool loop, must survive crashes / timeouts | Use `runAgent` |
+| Custom phase graph that occasionally calls an LLM | Use `buildAgentPhase` and compose it manually |
+
+`runAgent` earns its keep when:
+- The conversation may span multiple turns of tool use
+- You need crash-safe resume (`retryMode: "resume"`)
+- You want per-turn log entries visible in your UI
+
+## Quickstart
+
+Install dependencies:
+
+```bash
+pnpm add @claritylabs/cl-pipelines ai zod
+```
+
+```ts
+import { gateway } from "ai";
+import { tool } from "ai";
+import { z } from "zod";
+import {
+  runAgent,
+  advancePhase,
+  buildAgentPhase,
+} from "@claritylabs/cl-pipelines";
+import {
+  createMemoryStorage,
+  createMemoryScheduler,
+} from "@claritylabs/cl-pipelines";
+import type { AgentCheckpoint } from "@claritylabs/cl-pipelines";
+
+const model = gateway("anthropic/claude-opus-4.7"); // or "openai/gpt-5.4"
+
+const calculator = tool({
+  description: "Evaluate a simple arithmetic expression",
+  inputSchema: z.object({ expression: z.string() }),
+  execute: async ({ expression }) => {
+    return { result: Function(`"use strict"; return (${expression})`)() };
+  },
+});
+
+const storage = createMemoryStorage<AgentCheckpoint>();
+const scheduler = createMemoryScheduler();
+const phases = [buildAgentPhase({ model, tools: { calculator } })];
+
+// In production, _bind is replaced by your Convex internalAction.
+scheduler._bind(async (jobId) => {
+  await advancePhase({ jobId, phases, storage, scheduler });
+});
+
+await runAgent({
+  jobId: "job-001",
+  model,
+  tools: { calculator },
+  system: "You are a helpful assistant.",
+  initialMessages: [{ role: "user", content: "What is (2 + 3) * 7?" }],
+  storage,
+  scheduler,
+});
+
+// Drain the in-memory scheduler (test-only convenience)
+await scheduler.drain();
+```
+
+> **Provider-agnostic.** cl-pipelines accepts any `LanguageModel` — a Vercel AI Gateway
+> string (`gateway("anthropic/claude-opus-4.7")`), a direct provider (`gateway("openai/gpt-5.4")`), or
+> a mock. AI Gateway is the recommended production path but is not required.
+
+## Turn lifecycle
+
+```
+runAgent
+  └─ runPipeline seeds checkpoint { messages: initialMessages, turn: 0 }
+  └─ scheduler.scheduleAdvance → advancePhase
+       └─ phase "turn":
+            1. generateText({ model, messages, tools })
+            2. append result.response.messages to history
+            3a. finishReason === "tool-calls"  → kind: "next", nextPhase: "turn"
+            3b. finishReason === "stop"         → kind: "done"
+            3c. turn >= maxTurns                → kind: "done" (+ warn log)
+       └─ advancePhase persists next checkpoint, schedules next advance
+          (or marks job "complete")
+```
+
+Tool results (`role: "tool"`) are produced by the AI SDK when a tool has an `execute` function.
+They are included in `result.response.messages` and appended to the checkpoint automatically —
+no manual wiring required.
+
+## Retry behavior
+
+| `retryMode` | Behavior |
+|---|---|
+| `undefined` or `"resume"` | Starts from the saved checkpoint (message history intact) |
+| `"full"` | Discards checkpoint, starts fresh from `initialMessages` |
+
+## `maxTurns`
+
+When the turn counter reaches `maxTurns` (default: `10`), the phase logs a `warn`-level entry
+and returns `kind: "done"`. The job status lands on `"complete"` — not `"error"`. The agent
+ran to the configured limit and was conclusively stopped.

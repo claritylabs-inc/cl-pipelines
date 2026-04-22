@@ -1,8 +1,152 @@
 ---
 title: Primitives
-description: ''
+description: Full prop reference for StatusBanner, ProgressLog, and RetryButtons.
 ---
 
 # Primitives
 
-_Content coming in Task 9._
+## `StatusBanner`
+
+A compound component. Render `StatusBanner.Root` (or just `StatusBanner`) as the wrapper;
+nest the sub-components inside.
+
+### `StatusBanner.Root` / `StatusBanner`
+
+```ts
+props: {
+  status: PipelineStatus | undefined;
+  error?: string;
+  log?: LogEntry[];
+  children: React.ReactNode;
+  className?: string;
+}
+```
+
+- Renders **nothing** when `status` is `"idle"`, `"complete"`, or `undefined`.
+- When visible, renders a `<div role="status" data-status={status}>` wrapping `children`.
+- `status`, `error`, and `log` are made available to all child primitives via context.
+
+**`data-status`** values: `"running"` | `"paused"` | `"error"`
+
+### `StatusBanner.Indicator`
+
+```ts
+props: {
+  className?: string;
+  render?: (status: PipelineStatus) => React.ReactNode;
+}
+```
+
+- Default: renders `<span data-indicator={status} aria-hidden />`.
+- When `render` is provided, calls it with the current status and renders the result.
+- Use `render` to drop in a spinner, icon, or animated dot from your design system.
+
+**`data-indicator`** values: same as `data-status`.
+
+### `StatusBanner.Title`
+
+```ts
+props: {
+  children?: React.ReactNode;
+  className?: string;
+}
+```
+
+- Renders `<div data-role="title">`.
+- Default content when `children` is omitted:
+  - `"running"` → `"Running…"`
+  - `"error"` → `"Error"`
+  - `"paused"` → `"Paused"`
+- Pass `children` to override the default text.
+
+### `StatusBanner.Description`
+
+```ts
+props: {
+  children?: React.ReactNode;
+  className?: string;
+}
+```
+
+- Renders `<div data-role="description">`.
+- Default content: the `error` string passed to `StatusBanner.Root`.
+- Pass `children` to override.
+
+### `StatusBanner.Actions`
+
+```ts
+props: {
+  children: React.ReactNode;
+  className?: string;
+}
+```
+
+- Renders `<div data-role="actions">`.
+- No logic — purely a layout slot. Drop `RetryButtons` or custom buttons here.
+
+---
+
+## `ProgressLog`
+
+```ts
+props: {
+  entries: LogEntry[] | undefined;
+  latestOnly?: boolean;
+  limit?: number;        // default: 10
+  className?: string;
+  renderEntry?: (entry: LogEntry, i: number) => React.ReactNode;
+}
+```
+
+- Renders `null` when `entries` is `undefined` or empty.
+- Renders `<ul data-role="progress-log">`.
+- When `latestOnly` is `true`, shows only the last entry (`entries.slice(-1)`).
+- When `latestOnly` is `false` (default), shows the last `limit` entries (`entries.slice(-limit)`).
+- Default list item:
+  ```html
+  <li data-level="info|warn|error" data-phase="phase-name">
+    <time dateTime="ISO string">HH:MM:SS</time>
+    <span>message text</span>
+  </li>
+  ```
+- Pass `renderEntry` to replace the default list item with your own markup.
+
+**`data-level`** values: `"info"` | `"warn"` | `"error"` (absent if `entry.level` is undefined)
+
+**`data-phase`** value: the phase name string (absent if `entry.phase` is undefined)
+
+---
+
+## `RetryButtons`
+
+```ts
+props: {
+  onRetry: (mode: RetryMode) => void;
+  disabled?: boolean;
+  labels?: { resume?: string; full?: string };
+  renderButton?: (
+    mode: RetryMode,
+    onClick: () => void,
+    label: string,
+    disabled: boolean,
+  ) => React.ReactNode;
+  className?: string;
+}
+```
+
+- Renders `<div data-role="retry-buttons">` containing two buttons.
+- Default labels: `"Retry"` (resume) and `"Restart"` (full).
+- Default button: `<button type="button" data-retry-mode={mode}>`.
+- Pass `renderButton` to render your own button component (e.g., shadcn `<Button>`).
+- `disabled` applies to both buttons.
+
+**`data-retry-mode`** values: `"resume"` | `"full"`
+
+### `RetryMode` type
+
+```ts
+type RetryMode = "resume" | "full";
+```
+
+Re-exported from `@claritylabs/cl-pipelines/ui` for convenience. `"resume"` continues from
+the saved checkpoint; `"full"` discards history and starts over.

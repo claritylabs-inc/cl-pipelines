@@ -1,8 +1,184 @@
 ---
-title: Writing Your Own
-description: ''
+title: Writing Your Own Adapter
+description: Implement StorageAdapter and SchedulerAdapter for any backend — Postgres, Redis, DynamoDB, or a durable queue.
 ---
 
-# Writing Your Own
+# Writing Your Own Adapter
 
-_Content coming in Task 9._
+cl-pipelines talks to your infrastructure through two small interfaces. If the built-in
+Convex adapter doesn't fit your stack, implement them yourself.
+
+## The two interfaces
+
+```ts
+import type {
+  StorageAdapter,
+  SchedulerAdapter,
+  Checkpoint,
+  LogEntry,
+  PipelineStatus,
+} from "@claritylabs/cl-pipelines";
+
+// StorageAdapter<TState> — persist job state
+type StorageAdapter<TState> = {
+  getJob(jobId: string): Promise<{
+    status: PipelineStatus;
+    checkpoint: Checkpoint<TState> | null;
+    error?: string;
+  } | null>;
+  setStatus(jobId: string, status: PipelineStatus, error?: string): Promise<void>;
+  setCheckpoint(jobId: string, checkpoint: Checkpoint<TState> | null): Promise<void>;
+  appendLog(jobId: string, entry: LogEntry): Promise<void>;
+  clearLog(jobId: string): Promise<void>;
+};
+
+// SchedulerAdapter — trigger the next advancePhase
+type SchedulerAdapter = {
+  scheduleAdvance(jobId: string, delayMs: number): Promise<void>;
+};
+```
+
+## Implementation tips
+
+### `getJob` must return `null` for unknown IDs
+
+Do not throw for IDs that don't exist. Return `null`:
+
+```ts
+async getJob(jobId) {
+  const row = await db.query("SELECT * FROM jobs WHERE id = $1", [jobId]);
+  if (!row) return null;
+  return {
+    status: row.pipeline_status,
+    checkpoint: row.pipeline_checkpoint ?? null,
+    error: row.pipeline_error,
+  };
+},
+```
+
+### `setCheckpoint(id, null)` means "clear the checkpoint"
+
+When a job reaches `done`, `advancePhase` calls `setCheckpoint(jobId, null)`. Your
+implementation should store `null` / `undefined` (or delete the column), not silently skip:
+
+```ts
+async setCheckpoint(jobId, checkpoint) {
+  await db.query(
+    "UPDATE jobs SET pipeline_checkpoint = $2 WHERE id = $1",
+    [jobId, checkpoint ?? null],
+  );
+},
+```
+
+### `appendLog` must be append-only
+
+Do not reorder or dedup. Entries arrive in chronological order and must remain that way:
+
+```ts
+async appendLog(jobId, entry) {
+  // Using a JSONB append in Postgres as an example
+  await db.query(
+    "UPDATE jobs SET pipeline_log = pipeline_log || $2::jsonb WHERE id = $1",
+    [jobId, JSON.stringify([entry])],
+  );
+},
+```
+
+### `scheduleAdvance` — timing is advisory
+
+`delayMs` is a hint (usually `0`). Your scheduler is free to round up, batch, or ignore it.
+What matters is that `advancePhase` is _eventually_ called with the `jobId`:
+
+```ts
+// Example: SQS / BullMQ / Inngest
+async scheduleAdvance(jobId, delayMs) {
+  await queue.add("advance-pipeline", { jobId }, { delay: delayMs });
+},
+```
+
+Your queue worker then calls:
+
+```ts
+import { advancePhase } from "@claritylabs/cl-pipelines";
+
+worker.process("advance-pipeline", async (job) => {
+  await advancePhase({ jobId: job.data.jobId, phases, storage, scheduler });
+});
+```
+
+## Minimal Postgres example
+
+```ts
+import type { StorageAdapter, SchedulerAdapter } from "@claritylabs/cl-pipelines";
+import { Pool } from "pg";
+
+export function createPostgresStorageAdapter<TState>(
+  pool: Pool,
+): StorageAdapter<TState> {
+  return {
+    async getJob(jobId) {
+      const { rows } = await pool.query(
+        "SELECT pipeline_status, pipeline_checkpoint, pipeline_error FROM jobs WHERE id = $1",
+        [jobId],
+      );
+      if (!rows.length) return null;
+      const row = rows[0];
+      return {
+        status: row.pipeline_status ?? "idle",
+        checkpoint: row.pipeline_checkpoint ?? null,
+        error: row.pipeline_error,
+      };
+    },
+    async setStatus(jobId, status, error) {
+      await pool.query(
+        "UPDATE jobs SET pipeline_status = $2, pipeline_error = $3 WHERE id = $1",
+        [jobId, status, error ?? null],
+      );
+    },
+    async setCheckpoint(jobId, checkpoint) {
+      await pool.query(
+        "UPDATE jobs SET pipeline_checkpoint = $2 WHERE id = $1",
+        [jobId, checkpoint ?? null],
+      );
+    },
+    async appendLog(jobId, entry) {
+      await pool.query(
+        "UPDATE jobs SET pipeline_log = COALESCE(pipeline_log, '[]'::jsonb) || $2::jsonb WHERE id = $1",
+        [jobId, JSON.stringify([entry])],
+      );
+    },
+    async clearLog(jobId) {
+      await pool.query("UPDATE jobs SET pipeline_log = '[]'::jsonb WHERE id = $1", [jobId]);
+    },
+  };
+}
+```
+
+## Test recipe
+
+Use the in-memory adapters as your behavioral reference. A correct adapter should produce
+the same observable results:
+
+```ts
+import {
+  createMemoryStorage,
+  createMemoryScheduler,
+  runPipeline,
+  advancePhase,
+} from "@claritylabs/cl-pipelines";
+
+// Swap in your adapter and run the same test:
+const storage = createMyAdapter<MyState>();
+const scheduler = createMyScheduler();
+
+// Bind scheduler to advancePhase
+scheduler.onAdvance = async (jobId) => {
+  await advancePhase({ jobId, phases, storage, scheduler });
+};
+
+await runPipeline({ jobId: "t1", phases, storage, scheduler, initialState: {} });
+await scheduler.drain(); // or equivalent
+
+const job = await storage.getJob("t1");
+assert(job?.status === "complete");
+```
