@@ -1,0 +1,28 @@
+---
+title: Changelog
+description: Release history for @claritylabs/cl-pipelines
+---
+
+# Changelog
+
+## 0.1.0 — 2026-04-22
+
+Initial release.
+
+**Core**
+- Phase runner with `runPipeline` + `advancePhase` — schedule-and-advance pattern for long-running jobs.
+- Typed `Checkpoint<TState>` protocol with explicit resume/full retry modes.
+- `PipelineError` / `PhaseError` classes.
+
+**Agent**
+- `runAgent` primitive — LLM + tool loop on top of the phase runner, checkpointed per turn.
+- Provider-agnostic via AI SDK v6's `LanguageModelV2`. AI Gateway recommended for production.
+
+**Convex adapter** (subpath `./convex`)
+- `pipelineFields()` schema field builder.
+- `createConvexStorageAdapter` + `createConvexSchedulerAdapter`.
+
+**UI primitives** (subpath `./ui`)
+- Headless `StatusBanner` compound component (Root/Indicator/Title/Description/Actions).
+- `ProgressLog` and `RetryButtons` primitives.
+- No styled variant in v0.1 — consumers compose their own.

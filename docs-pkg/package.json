@@ -1,0 +1,25 @@
+{
+  "name": "@claritylabs/cl-pipelines-docs",
+  "version": "0.1.0",
+  "description": "Documentation content for @claritylabs/cl-pipelines",
+  "main": "meta.json",
+  "exports": {
+    "./meta.json": "./meta.json",
+    "./*": "./*"
+  },
+  "files": ["**/*.mdx", "meta.json", "README.md"],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/claritylabs-inc/cl-pipelines.git",
+    "directory": "docs-pkg"
+  },
+  "homepage": "https://claritylabs.inc/docs/pipelines",
+  "bugs": {
+    "url": "https://github.com/claritylabs-inc/cl-pipelines/issues"
+  },
+  "license": "Apache-2.0"
+}

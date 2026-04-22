@@ -1,0 +1,58 @@
+{
+  "title": "CL-Pipelines",
+  "sections": [
+    {
+      "title": "Getting Started",
+      "slug": "getting-started",
+      "pages": [
+        { "slug": "quickstart", "title": "Quickstart" },
+        { "slug": "concepts", "title": "Core Concepts" },
+        { "slug": "installation", "title": "Installation" }
+      ]
+    },
+    {
+      "title": "Phase Runner",
+      "slug": "phase-runner",
+      "pages": [
+        { "slug": "pipeline", "title": "Pipelines" },
+        { "slug": "phases", "title": "Writing Phases" },
+        { "slug": "checkpoints", "title": "Checkpoints" },
+        { "slug": "retry", "title": "Retry Modes" }
+      ]
+    },
+    {
+      "title": "Agent",
+      "slug": "agent",
+      "pages": [
+        { "slug": "overview", "title": "Overview" },
+        { "slug": "tools", "title": "Tools" },
+        { "slug": "checkpointing", "title": "Agent Checkpointing" }
+      ]
+    },
+    {
+      "title": "Adapters",
+      "slug": "adapters",
+      "pages": [
+        { "slug": "overview", "title": "Overview" },
+        { "slug": "convex", "title": "Convex Adapter" },
+        { "slug": "writing-your-own", "title": "Writing Your Own" }
+      ]
+    },
+    {
+      "title": "UI",
+      "slug": "ui",
+      "pages": [
+        { "slug": "overview", "title": "Overview" },
+        { "slug": "primitives", "title": "Primitives" },
+        { "slug": "composing", "title": "Composing a Banner" }
+      ]
+    },
+    {
+      "title": "Reference",
+      "slug": "reference",
+      "pages": [
+        { "slug": "api", "title": "API Reference" }
+      ]
+    }
+  ]
+}
