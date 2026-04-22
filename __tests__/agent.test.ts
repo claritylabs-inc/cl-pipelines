@@ -18,7 +18,8 @@ import { createMemoryStorage, createMemoryScheduler } from "../src/adapters/memo
 
 type ScriptedStep =
   | { type: "tool-call"; toolName: string; input: unknown }
-  | { type: "text"; text: string };
+  | { type: "text"; text: string }
+  | { type: "length" };
 
 function scriptedModel(steps: ScriptedStep[]): LanguageModelV2 {
   let i = 0;
@@ -30,6 +31,14 @@ function scriptedModel(steps: ScriptedStep[]): LanguageModelV2 {
     async doGenerate() {
       const step = steps[Math.min(i, steps.length - 1)];
       i++;
+      if (step.type === "length") {
+        return {
+          content: [{ type: "text" as const, text: "" }],
+          finishReason: "length" as const,
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          warnings: [],
+        };
+      }
       if (step.type === "tool-call") {
         return {
           content: [
@@ -107,6 +116,30 @@ describe("agent primitive", () => {
     // The max-turns warning must NOT be present.
     const logs = storage._inspect().get("j1")?.log ?? [];
     expect(logs.some((l) => l.message.includes("maxTurns"))).toBe(false);
+  });
+
+  it("treats finishReason=length as done and logs a truncation warning", async () => {
+    const storage = createMemoryStorage<AgentCheckpoint>();
+    const scheduler = createMemoryScheduler();
+    const model = scriptedModel([{ type: "length" }]);
+
+    const phase = buildAgentPhase({ model, maxTurns: 5 });
+    bind(scheduler, storage, phase);
+
+    await runAgent({
+      jobId: "j-length",
+      model,
+      initialMessages: [{ role: "user", content: "go" }],
+      maxTurns: 5,
+      storage,
+      scheduler,
+    });
+    await scheduler.drain();
+
+    const job = await storage.getJob("j-length");
+    expect(job?.status).toBe("complete");
+    const logs = storage._inspect().get("j-length")?.log ?? [];
+    expect(logs.some((l) => l.message.includes("truncated"))).toBe(true);
   });
 
   it("terminates with a warning when maxTurns is reached", async () => {

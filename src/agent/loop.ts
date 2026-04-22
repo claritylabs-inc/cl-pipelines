@@ -67,7 +67,24 @@ export function buildAgentPhase<TOOLS extends ToolSet = ToolSet>(
         turn: turn + 1,
       };
 
+      if (result.finishReason === "length") {
+        await ctx.log("Response truncated (finishReason=length); treating as done", "warn");
+        await ctx.saveState(nextState);
+        return { kind: "done" };
+      }
+
+      if (result.finishReason === "error") {
+        await ctx.log(`agent: model returned finishReason=error`, "error");
+        return { kind: "error", error: "model returned finishReason=error" };
+      }
+
       if (!hasToolCalls) {
+        if (result.finishReason !== "stop" && result.finishReason !== "tool-calls") {
+          await ctx.log(
+            `agent: unrecognized finishReason="${result.finishReason}", treating as done`,
+            "warn",
+          );
+        }
         await ctx.saveState(nextState);
         return { kind: "done" };
       }
