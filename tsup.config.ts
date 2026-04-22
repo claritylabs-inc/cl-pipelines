@@ -22,5 +22,6 @@ export default defineConfig([
     dts: true,
     sourcemap: true,
     external: ["react"],
+    banner: { js: '"use client";' },
   },
 ]);
