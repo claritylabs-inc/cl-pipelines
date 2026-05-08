@@ -1,7 +1,7 @@
 {
   "name": "@claritylabs/cl-pipelines",
   "version": "0.1.0",
-  "description": "Runtime-agnostic long-running jobs + agent primitives with Convex adapter and UI",
+  "description": "Durable execution primitives for deterministic agents and regulated workflows",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",

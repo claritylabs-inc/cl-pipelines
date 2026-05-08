@@ -1,17 +1,17 @@
 ---
 title: CL-Pipelines
-description: Runtime-agnostic long-running jobs and agent primitives with first-class checkpoints and retries
+description: Durable execution primitives for deterministic agents and regulated workflows
 ---
 
 import { Cards, Card } from "fumadocs-ui/components/card";
 
-[Clarity Labs](https://claritylabs.inc) builds open infrastructure for AI agents working with insurance.
+[Clarity Labs](https://claritylabs.inc) builds deterministic AI agents for regulated industries, starting with commercial insurance.
 
-**CL-Pipelines** is a runtime-agnostic TypeScript library for long-running jobs and agent primitives. It gives you a typed phase model, explicit checkpoint protocol, and built-in retry modes — the infrastructure you need when work must survive crashes, resume from exactly where it failed, and report progress to end users.
+**CL-Pipelines** is a runtime-agnostic TypeScript library for long-running jobs and agent primitives. It gives you a typed phase model, explicit checkpoint protocol, and built-in retry modes — the infrastructure you need when regulated work must survive crashes, resume from exactly where it failed, and report progress to end users.
 
 ## Who it's for
 
-Teams building workflows that can't afford to restart from scratch on failure. If you're running multi-step jobs — document processing pipelines, approval chains, agentic LLM loops — and you need durability, resumability, and visible progress, cl-pipelines is the layer that holds it together.
+Teams building workflows that cannot afford to restart from scratch on failure. If you're running multi-step jobs — document processing pipelines, approval chains, deterministic agent loops, human review flows — and you need durability, resumability, and visible progress, cl-pipelines is the layer that holds it together.
 
 ## How it differs from a job queue
 
@@ -19,7 +19,7 @@ Tools like BullMQ, Inngest, or cloud queues handle scheduling and delivery. CL-P
 
 ## How it differs from an agent framework
 
-LangGraph and CrewAI are opinionated about infrastructure and graph topology. CL-Pipelines is runtime-agnostic: it runs wherever JavaScript runs, uses the AI SDK's provider-agnostic `LanguageModelV2` interface, and doesn't prescribe a graph structure. The agent primitive is a thin loop on top of the same phase runner — checkpointed per turn, not per workflow.
+LangGraph and CrewAI are opinionated about infrastructure and graph topology. CL-Pipelines is runtime-agnostic: it runs wherever JavaScript runs, uses the AI SDK's provider-agnostic `LanguageModelV2` interface, and doesn't prescribe a graph structure. The agent primitive is a thin loop on top of the same phase runner — checkpointed per turn, not per workflow — so teams can wrap model behavior in durable, inspectable execution.
 
 ## Get started
 

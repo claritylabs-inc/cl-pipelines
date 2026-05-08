@@ -1,6 +1,6 @@
 # CL-Pipelines
 
-Runtime-agnostic long-running jobs + agent primitives. Typed checkpoints, resume/full retry, Convex adapter, headless UI.
+Durable execution primitives for deterministic agents and regulated workflows. Typed checkpoints, resume/full retry, Convex adapter, headless UI.
 
 **[Documentation](https://claritylabs.inc/docs/pipelines)** | **[npm](https://www.npmjs.com/package/@claritylabs/cl-pipelines)** | **[GitHub](https://github.com/claritylabs-inc/cl-pipelines)**
 
@@ -64,7 +64,7 @@ console.log(job.status); // "complete"
 ## When to Use
 
 - Durable long-running jobs that must survive process restarts and partial failures.
-- Agent loops (LLM + tools) where each turn is checkpointed and can be retried independently.
+- Deterministic agent loops (LLM + tools + reviewable state) where each turn is checkpointed and can be retried independently.
 - Multi-phase pipelines with explicit checkpoint boundaries, typed state, and resume/full retry modes.
 
 ## Docs

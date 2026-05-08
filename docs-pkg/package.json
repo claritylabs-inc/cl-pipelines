@@ -1,7 +1,7 @@
 {
   "name": "@claritylabs/cl-pipelines-docs",
-  "version": "0.1.0",
-  "description": "Documentation content for @claritylabs/cl-pipelines",
+  "version": "0.1.1",
+  "description": "Documentation content for CL-Pipelines durable execution primitives",
   "main": "meta.json",
   "exports": {
     "./meta.json": "./meta.json",
